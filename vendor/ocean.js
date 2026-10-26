@@ -190,12 +190,13 @@
     var w = canvas.clientWidth || stage.clientWidth || 0;
     var h = canvas.clientHeight || stage.clientHeight || 0;
     if (w < 2 || h < 2) return false;
-    var dpr = Math.min(window.devicePixelRatio || 1, 1);
+    var dpr = Math.min(window.devicePixelRatio || 1, softGL ? 1 : 1.15);
     var pw = Math.max(2, Math.round(w * dpr));
     var ph = Math.max(2, Math.round(h * dpr));
-    var cap = 220000;
-    if (pw * ph > cap) {
-      var s = Math.sqrt(cap / (pw * ph));
+    var m = Math.max(pw, ph);
+    var cap = longCap;
+    if (m > cap) {
+      var s = cap / m;
       pw = Math.max(2, Math.round(pw * s));
       ph = Math.max(2, Math.round(ph * s));
     }
@@ -207,21 +208,17 @@
   }
 
   function glslWaves() {
-    var Q = 0.55;
-    var s = "void waves(vec2 xz, out float h, out vec2 slope, out vec2 disp) {\n";
-    s += "  h = 0.0;\n  slope = vec2(0.0);\n  disp = vec2(0.0);\n";
+    var s = "void swell(vec2 xz, out float h, out vec2 slope) {\n";
+    s += "  h = 0.0;\n  slope = vec2(0.0);\n";
     s += "  float th, sn, cs, kk;\n";
     for (var i = 0; i < WV.length; i++) {
       var A = WV[i][0], kx = WV[i][1], kz = WV[i][2], ph = WV[i][3];
-      var klen = hypot(kx, kz);
-      var om = Math.sqrt(G * klen);
-      var damp = i >= 2 ? " * mix(1.0, 0.35, uMix)" : "";
+      var om = Math.sqrt(G * hypot(kx, kz));
       s += "  th = dot(vec2(" + kx.toFixed(5) + ", " + kz.toFixed(5) + "), xz) + " + ph.toFixed(4) + " + " + om.toFixed(5) + " * uTime;\n";
       s += "  sn = sin(th); cs = cos(th);\n";
-      s += "  kk = " + A.toFixed(5) + damp + ";\n";
+      s += "  kk = " + A.toFixed(5) + ";\n";
       s += "  h += kk * sn;\n";
       s += "  slope += kk * vec2(" + kx.toFixed(5) + ", " + kz.toFixed(5) + ") * cs;\n";
-      s += "  disp += " + Q.toFixed(3) + " * kk * vec2(" + (kx / klen).toFixed(5) + ", " + (kz / klen).toFixed(5) + ") * cs;\n";
     }
     s += "}\n";
     return s;
@@ -252,146 +249,70 @@
       "out vec4 o;",
       "const vec3 SUN = vec3(0.17288, 0.31119, 0.93449);",
       glslWaves(),
-      "ivec2 w64(vec2 p) {",
-      "  return ivec2(clamp(mod(p, 64.0), 0.0, 63.0));",
-      "}",
-      "vec3 sampD(vec2 world) {",
-      "  vec2 g = (world / uL + 0.5) * 64.0 - 0.5;",
-      "  vec2 f = fract(g);",
-      "  vec2 b = floor(g);",
-      "  ivec2 i00 = w64(b);",
-      "  ivec2 i10 = w64(b + vec2(1.0, 0.0));",
-      "  ivec2 i01 = w64(b + vec2(0.0, 1.0));",
-      "  ivec2 i11 = w64(b + vec2(1.0, 1.0));",
-      "  vec3 a = texelFetch(uDisp, i00, 0).xyz;",
-      "  vec3 c = texelFetch(uDisp, i10, 0).xyz;",
-      "  vec3 d = texelFetch(uDisp, i01, 0).xyz;",
-      "  vec3 e = texelFetch(uDisp, i11, 0).xyz;",
-      "  return mix(mix(a, c, f.x), mix(d, e, f.x), f.y);",
-      "}",
-      "float heightOnly(vec2 xz) {",
-      "  float h; vec2 slope, disp;",
-      "  waves(xz, h, slope, disp);",
-      "  waves(xz + disp, h, slope, disp);",
-      "  return h;",
-      "}",
-      "void surfaceAt(vec2 xz, out float h, out vec3 nrm) {",
-      "  float h0; vec2 slope0, disp0;",
-      "  waves(xz, h0, slope0, disp0);",
-      "  vec2 p = xz + disp0;",
-      "  float h1; vec2 slope1, disp1;",
-      "  waves(p, h1, slope1, disp1);",
-      "  h = h1;",
-      "  vec2 slope = slope1;",
-      "  if (uMix > 0.001) {",
-      "    vec3 d0 = sampD(p);",
-      "    vec3 dxs = sampD(p + vec2(0.62, 0.0));",
-      "    vec3 dzs = sampD(p + vec2(0.0, 0.62));",
-      "    h += d0.x * uMix;",
-      "    slope.x += (dxs.x - d0.x) / 0.62 * uMix;",
-      "    slope.y += (dzs.x - d0.x) / 0.62 * uMix;",
-      "  }",
-      "  nrm = normalize(vec3(-slope.x, 1.0, -slope.y));",
+      "float dispH(vec2 world) {",
+      "  vec2 uv = fract(world / uL + 0.5);",
+      "  return texture(uDisp, uv).x;",
       "}",
       "vec3 sky(vec3 rd) {",
-      "  float up = clamp(rd.y, -0.15, 1.0);",
-      "  vec3 zen = vec3(0.13, 0.26, 0.50);",
-      "  vec3 mid = vec3(0.46, 0.64, 0.78);",
-      "  vec3 hor = vec3(0.98, 0.74, 0.52);",
-      "  float t = smoothstep(-0.02, 0.55, up);",
-      "  vec3 col = mix(hor, mix(mid, zen, smoothstep(0.0, 0.72, up)), smoothstep(0.0, 0.28, up));",
+      "  float up = clamp(rd.y, 0.0, 1.0);",
+      "  vec3 zen = vec3(0.12, 0.24, 0.48);",
+      "  vec3 mid = vec3(0.42, 0.62, 0.78);",
+      "  vec3 hor = vec3(0.98, 0.72, 0.48);",
+      "  vec3 col = mix(hor, mix(mid, zen, smoothstep(0.05, 0.72, up)), smoothstep(0.0, 0.22, up));",
       "  float sd = clamp(dot(rd, SUN), 0.0, 1.0);",
-      "  col += vec3(1.0, 0.90, 0.70) * pow(sd, 420.0) * 2.4;",
-      "  col += vec3(1.0, 0.70, 0.38) * pow(sd, 8.0) * 0.34;",
-      "  float cl = sin(rd.x * 22.0 + rd.z * 8.0 + uTime * 0.05);",
-      "  col = mix(col, vec3(0.97, 0.92, 0.86), smoothstep(0.78, 0.98, cl) * smoothstep(0.12, 0.45, rd.y) * 0.18);",
+      "  col += vec3(1.0, 0.90, 0.66) * smoothstep(0.9975, 0.9995, sd) * 1.6;",
+      "  col += vec3(1.0, 0.68, 0.36) * pow(sd, 12.0) * 0.32;",
       "  return col;",
       "}",
-      "float marchH(vec3 ro, vec3 rd) {",
-      "  if (rd.y > 0.012) return -1.0;",
-      "  float t = 1.4;",
-      "  if (rd.y < -0.0006) t = clamp((0.04 - ro.y) / rd.y, 0.0, 90.0);",
-      "  for (int i = 0; i < 4; i++) {",
-      "    vec3 p = ro + rd * t;",
-      "    float hh = heightOnly(p.xz);",
-      "    t += (hh - p.y) / max(0.30, -rd.y + 0.20);",
-      "    t = clamp(t, 0.0, 130.0);",
-      "  }",
-      "  if (t < 0.02 || t > 110.0) return -1.0;",
-      "  return t;",
-      "}",
-      "float lensWet(vec3 ro, vec3 rd) {",
-      "  vec3 q = ro + rd * 0.22;",
-      "  float hh = heightOnly(q.xz);",
-      "  return smoothstep(0.055, -0.06, q.y - hh);",
-      "}",
       "vec3 shadeAbove(vec3 ro, vec3 rd) {",
-      "  float t = marchH(ro, rd);",
-      "  if (t < 0.0) {",
-      "    if (rd.y < -0.002) {",
-      "      vec3 far = sky(normalize(vec3(rd.x, 0.015, rd.z)));",
-      "      return mix(vec3(0.08, 0.26, 0.30), far, 0.72);",
-      "    }",
-      "    return sky(rd);",
+      "  if (rd.y > 0.008) return sky(rd);",
+      "  float t = (0.02 - ro.y) / min(rd.y, -0.0008);",
+      "  t = clamp(t, 0.4, 72.0);",
+      "  vec2 xz = ro.xz + rd.xz * t;",
+      "  float h; vec2 slope;",
+      "  swell(xz, h, slope);",
+      "  t = clamp(t + (h - (ro.y + rd.y * t)) / max(0.28, -rd.y), 0.25, 88.0);",
+      "  xz = ro.xz + rd.xz * t;",
+      "  swell(xz, h, slope);",
+      "  if (uMix > 0.001) {",
+      "    float d0 = dispH(xz);",
+      "    h += d0 * uMix;",
+      "    slope.x += (dispH(xz + vec2(0.9, 0.0)) - d0) / 0.9 * uMix;",
+      "    slope.y += (dispH(xz + vec2(0.0, 0.9)) - d0) / 0.9 * uMix;",
       "  }",
-      "  vec3 p = ro + rd * t;",
-      "  float h; vec3 nrm;",
-      "  surfaceAt(p.xz, h, nrm);",
-      "  float ndv = max(dot(nrm, -rd), 0.0);",
-      "  float fres = mix(0.04, 0.98, pow(1.0 - ndv, 5.0));",
-      "  vec3 refl = sky(reflect(rd, nrm));",
-      "  vec3 body = vec3(0.04, 0.30, 0.32);",
-      "  body += vec3(0.16, 0.22, 0.10) * pow(max(dot(nrm, SUN), 0.0), 1.4);",
-      "  body += vec3(0.08, 0.14, 0.12) * ndv;",
-      "  vec3 col = mix(body, refl, fres);",
-      "  float spec = pow(max(dot(reflect(-SUN, nrm), -rd), 0.0), 90.0);",
-      "  col += vec3(1.0, 0.90, 0.68) * spec * 1.35;",
-      "  col += vec3(1.0, 0.78, 0.48) * pow(max(dot(reflect(-SUN, nrm), -rd), 0.0), 12.0) * 0.18;",
-      "  float glitter = pow(max(dot(nrm, SUN), 0.0), 28.0);",
-      "  float hz = fract(sin(dot(floor(p.xz * 5.5), vec2(12.9, 47.3)) + floor(uTime * 7.0)) * 43758.5);",
-      "  col += vec3(1.0, 0.92, 0.72) * glitter * step(0.90, hz) * exp(-t * 0.035) * 0.85;",
-      "  float foam = smoothstep(0.14, 0.25, h);",
-      "  foam *= 0.6 + 0.4 * sin(p.x * 4.5 + uTime * 1.4) * sin(p.z * 3.8 - uTime);",
-      "  foam *= exp(-t * 0.07);",
-      "  col = mix(col, vec3(0.84, 0.88, 0.86), clamp(foam, 0.0, 1.0) * 0.72);",
-      "  float fog = 1.0 - exp(-t * 0.016);",
-      "  vec3 hor = sky(normalize(vec3(rd.x, 0.02, rd.z)));",
-      "  col = mix(col, hor, clamp(fog, 0.0, 1.0));",
+      "  vec3 nrm = normalize(vec3(-slope.x, 1.0, -slope.y));",
+      "  float ndv = max(dot(nrm, -rd), 0.04);",
+      "  float fres = mix(0.05, 0.92, pow(1.0 - ndv, 4.0));",
+      "  vec3 body = vec3(0.04, 0.28, 0.32) + vec3(0.16, 0.20, 0.08) * max(dot(nrm, SUN), 0.0);",
+      "  vec3 col = mix(body, sky(reflect(rd, nrm)), fres);",
+      "  float spec = pow(max(dot(reflect(-SUN, nrm), -rd), 0.0), 40.0);",
+      "  col += vec3(1.0, 0.92, 0.70) * spec;",
+      "  float spark = step(0.92, fract(sin(dot(floor(xz * 6.0), vec2(12.9, 47.3)) + floor(uTime * 6.0)) * 43758.5));",
+      "  col += vec3(1.0, 0.94, 0.75) * spark * pow(max(dot(nrm, SUN), 0.0), 16.0) * exp(-t * 0.04);",
+      "  float foam = smoothstep(0.12, 0.22, h) * exp(-t * 0.08);",
+      "  col = mix(col, vec3(0.86, 0.90, 0.88), foam * 0.6);",
+      "  col = mix(col, sky(normalize(vec3(rd.x, 0.02, rd.z))), clamp(1.0 - exp(-t * 0.018), 0.0, 1.0));",
       "  return col;",
       "}",
       "vec3 shadeBelow(vec3 ro, vec3 rd) {",
-      "  float up = clamp(rd.y * 0.85 + 0.35, 0.0, 1.0);",
-      "  vec3 col = mix(vec3(0.01, 0.07, 0.11), vec3(0.04, 0.28, 0.34), up);",
-      "  float absorb = clamp(-uEye, 0.0, 3.2);",
-      "  col *= vec3(exp(-absorb * 0.55), exp(-absorb * 0.16), exp(-absorb * 0.08));",
-      "  if (rd.y < -0.05) {",
-      "    float tf = (-3.4 - ro.y) / rd.y;",
-      "    if (tf > 0.0 && tf < 36.0) {",
-      "      vec2 fx = ro.xz + rd.xz * tf;",
-      "      float c1 = sin(fx.x * 2.2 + uTime * 1.25) * sin(fx.y * 2.5 - uTime * 1.05);",
-      "      float c2 = sin((fx.x + fx.y) * 1.6 - uTime * 0.8);",
-      "      float cau = pow(max(0.0, c1 * 0.55 + c2 * 0.45), 2.0);",
-      "      col += vec3(0.20, 0.55, 0.50) * cau * exp(-tf * 0.085) * 0.7;",
-      "    }",
+      "  float up = clamp(rd.y * 0.8 + 0.32, 0.0, 1.0);",
+      "  vec3 col = mix(vec3(0.01, 0.06, 0.10), vec3(0.04, 0.24, 0.32), up);",
+      "  float absorb = clamp(-uEye, 0.0, 3.0);",
+      "  col *= vec3(exp(-absorb * 0.5), exp(-absorb * 0.14), exp(-absorb * 0.07));",
+      "  float ang = atan(rd.x - 0.35, rd.y + 0.1);",
+      "  float shaft = pow(max(sin(ang * 5.0 + uTime * 0.3), 0.0), 8.0);",
+      "  col += vec3(0.55, 0.36, 0.16) * shaft * smoothstep(-0.15, 0.45, rd.y) * 0.4;",
+      "  if (rd.y < -0.08) {",
+      "    vec2 fx = ro.xz + rd.xz * ((-2.8 - ro.y) / rd.y);",
+      "    float cau = sin(fx.x * 2.1 + uTime) * sin(fx.y * 2.4 - uTime * 0.8);",
+      "    col += vec3(0.16, 0.48, 0.42) * pow(max(cau, 0.0), 2.0) * 0.45;",
       "  }",
-      "  float ang = atan(rd.x - 0.42, rd.y + 0.12);",
-      "  float shaft = pow(max(0.0, sin(ang * 6.0 + uTime * 0.35)), 12.0);",
-      "  shaft *= smoothstep(-0.25, 0.55, rd.y) * smoothstep(-2.6, -0.1, uEye);",
-      "  col += vec3(0.62, 0.40, 0.18) * shaft * 0.42;",
-      "  if (rd.y > 0.52) {",
-      "    vec3 wn = vec3(0.0, 1.0, 0.0);",
-      "    float ts = clamp((0.08 - ro.y) / max(rd.y, 0.08), 0.15, 14.0);",
-      "    float hh; vec3 nn;",
-      "    surfaceAt((ro + rd * ts).xz, hh, nn);",
-      "    if (dot(nn, rd) > 0.0) wn = nn;",
-      "    vec3 air = refract(rd, wn, 0.752);",
-      "    if (dot(air, air) > 0.02) col = mix(col, sky(normalize(air)), 0.86);",
+      "  if (rd.y > 0.55) {",
+      "    vec3 air = refract(rd, vec3(0.0, 1.0, 0.0), 0.75);",
+      "    if (air.y > 0.0) col = mix(col, sky(normalize(air)), 0.82);",
       "  }",
-      "  vec2 cell = floor(gl_FragCoord.xy * 0.45 + vec2(0.0, uTime * 22.0));",
-      "  vec2 fv = fract(gl_FragCoord.xy * 0.45 + vec2(0.0, uTime * 22.0)) - 0.5;",
-      "  float mote = fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5);",
-      "  float dotp = smoothstep(0.42, 0.05, length(fv)) * step(0.975, mote);",
-      "  col += vec3(0.75, 0.88, 0.84) * dotp * (rd.y < 0.5 ? 1.0 : 0.2);",
+      "  float mote = fract(sin(dot(floor(gl_FragCoord.xy * 0.4 + vec2(0.0, uTime * 16.0)), vec2(127.1, 311.7))) * 43758.5);",
+      "  col += vec3(0.75, 0.88, 0.84) * step(0.986, mote) * 0.55;",
       "  return col;",
       "}",
       "void main() {",
@@ -401,17 +322,17 @@
       "  uv.y += 0.34;",
       "  vec3 rd = normalize(vec3(uv * 0.74, 1.0));",
       "  vec3 ro = vec3(0.0, uEye, 0.0);",
-      "  float wet = lensWet(ro, rd);",
       "  vec3 col;",
-      "  if (wet < 0.40) col = shadeAbove(ro, rd);",
-      "  else if (wet > 0.76) col = shadeBelow(ro, rd);",
-      "  else col = mix(shadeAbove(ro, rd), shadeBelow(ro, rd), smoothstep(0.40, 0.76, wet));",
-      "  float band = smoothstep(0.40, 0.56, wet) * smoothstep(0.78, 0.58, wet);",
-      "  col += vec3(0.82, 0.90, 0.88) * band * 1.05;",
-      "  col *= 1.0 - band * 0.16;",
+      "  if (uEye >= 0.28) col = shadeAbove(ro, rd);",
+      "  else if (uEye <= -0.08) col = shadeBelow(ro, rd);",
+      "  else {",
+      "    float w = smoothstep(0.28, -0.08, uEye);",
+      "    col = mix(shadeAbove(ro, rd), shadeBelow(ro, rd), w);",
+      "    float band = smoothstep(0.46, 0.54, v.y) * smoothstep(0.66, 0.56, v.y);",
+      "    col += vec3(0.84, 0.92, 0.90) * band * (1.0 - abs(w * 2.0 - 1.0));",
+      "  }",
       "  vec2 vg = v * 2.0 - 1.0;",
       "  col *= 1.0 - dot(vg, vg) * 0.06;",
-      "  col = pow(clamp(col, 0.0, 1.7), vec3(0.90, 0.93, 0.96));",
       "  o = vec4(clamp(col, 0.0, 1.0), 1.0);",
       "}"
     ].join("\n");
@@ -485,6 +406,17 @@
 
   var mixAmt = 0;
   var fft = null;
+  var longCap = 720;
+  var softGL = false;
+  (function detectSoft() {
+    var info = gl.getExtension("WEBGL_debug_renderer_info");
+    var name = "";
+    if (info) {
+      try { name = String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL) || ""); } catch (e) {}
+    }
+    softGL = !name || /swiftshader|llvmpipe|softpipe|software/i.test(name);
+    if (softGL) longCap = 640;
+  })();
 
   function drawGL(eye) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -791,8 +723,27 @@
 
   var fftTried = false;
   var prev = 0;
+  var nextDrawAt = 0;
+  var draws = 0;
+  function pace(cost) {
+    if (cost < 26) {
+      if (draws > 3) nextDrawAt = 0;
+      return;
+    }
+    // The first draws include pipeline compile. Space them, keep the buffer.
+    if (draws <= 2) {
+      nextDrawAt = performance.now() + 420;
+      return;
+    }
+    var floorCap = softGL ? 128 : 200;
+    if (longCap > floorCap) longCap = Math.max(floorCap, Math.round(longCap * 0.75));
+    var worst = Math.min(1000, Math.max(cost, 42));
+    var slots = Math.max(1, Math.min(4, Math.floor(1200 / worst)));
+    nextDrawAt = performance.now() + Math.ceil(3400 / slots);
+  }
   function frame(t) {
     requestAnimationFrame(frame);
+    var now = performance.now();
     var dt = prev ? Math.min(0.05, (t - prev) / 1000) : 0.016;
     prev = t;
     if (!paused) simTime += dt;
@@ -800,19 +751,26 @@
     prog += (goal - prog) * (1 - Math.exp(-k * dt));
     if (Math.abs(goal - prog) < 0.0006) prog = goal;
     setLab(goal > 0.5 ? "Return" : "Dive");
+    if (now < nextDrawAt) return;
     var base = eyeAt(prog);
     var follow = Math.exp(-Math.pow((base - 0.02) / 0.22, 2));
     var eye = base + swell(simTime) * 0.5 * follow;
     if (!fit()) return;
-    if (!fftTried && t > 4200) {
+    var t0 = performance.now();
+    if (!fftTried && !softGL && t > 7000) {
       fftTried = true;
-      try { if (!setupFft()) fft = null; } catch (err) { console.error(err); fft = null; }
+      try { if (!setupFft()) fft = null; } catch (err) { fft = null; }
     }
     if (fft && fft.run) {
       fft.run();
       mixAmt += (1 - mixAmt) * Math.min(1, dt * 0.7);
     }
     drawGL(eye);
+    if (draws < 3) {
+      try { gl.finish(); } catch (err) {}
+    }
+    draws += 1;
+    pace(performance.now() - t0);
     signal();
     mixAudio();
   }
