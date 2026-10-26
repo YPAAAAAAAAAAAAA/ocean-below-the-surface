@@ -1,0 +1,20 @@
+{
+  "id": "ocean-below-the-surface",
+  "title": {
+    "en": "Ocean Below the Surface",
+    "zh": "海面之下"
+  },
+  "intro": {
+    "en": "Scroll or drag to sink from an afternoon swell through the waterline, or tap Dive and Return. The lens stays level: glitter on the crests, then shafts and drift below.",
+    "zh": "滑动或拖拽，从午后涌浪穿过水线沉下去；也可点按 Dive 与 Return。镜头保持水平，先是浪峰碎光，再是水下光束和漂浮的颗粒。"
+  },
+  "officialFiles": [
+    "vendor/index.html",
+    "vendor/ocean.css",
+    "vendor/ocean.js",
+    "vendor/LICENSE.txt"
+  ],
+  "playHtml": "play.html",
+  "aspect": "phone",
+  "githubRepo": "ypaaaaaaaaaaaaa/ocean-below-the-surface"
+}
