@@ -1,6 +1,6 @@
-/* A phone canvas of an afternoon sea. The lens stays level. Drag, scroll, or
-   tap to sink from the swell through the waterline into shafts and drift.
-   Idea after @snychng — no upstream code. */
+/* A peaceful phone canvas of an afternoon sea. The lens stays level.
+   Drag, scroll, or tap to sink from the swell through the waterline
+   into shafts and drift. Original drawing. Nothing is uploaded. */
 (function () {
   "use strict";
 
@@ -366,6 +366,7 @@
   var actx = null;
   var surfGain = null;
   var underGain = null;
+  // Soft surf tone. It starts only after a tap. Nothing is recorded or sent.
   function ensureAudio() {
     if (actx) {
       if (actx.state === "suspended") { try { actx.resume(); } catch (e) {} }
