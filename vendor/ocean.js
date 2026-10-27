@@ -1,5 +1,5 @@
-/* Ocean descent. Original canvas scene: a level lens over an afternoon swell,
-   then shafts, a bright ceiling and drift once you sink. Scroll, drag, or tap.
+/* A phone canvas of an afternoon sea. The lens stays level. Drag, scroll, or
+   tap to sink from the swell through the waterline into shafts and drift.
    Idea after @snychng — no upstream code. */
 (function () {
   "use strict";
@@ -39,61 +39,6 @@
   }
   setPause();
   setLab("Dive");
-
-  var actx = null;
-  var surfGain = null;
-  var underGain = null;
-  function ensureAudio() {
-    if (actx) {
-      if (actx.state === "suspended") { try { actx.resume(); } catch (e) {} }
-      return;
-    }
-    var AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    try {
-      actx = new AC();
-      var rate = actx.sampleRate;
-      var len = rate;
-      var buf = actx.createBuffer(1, len, rate);
-      var data = buf.getChannelData(0);
-      var brown = 0;
-      for (var i = 0; i < len; i++) {
-        brown = brown * 0.96 + (Math.random() * 2 - 1) * 0.04;
-        data[i] = brown * 2.1;
-      }
-      var src = actx.createBufferSource();
-      src.buffer = buf;
-      src.loop = true;
-      var bp = actx.createBiquadFilter();
-      bp.type = "bandpass";
-      bp.frequency.value = 420;
-      bp.Q.value = 0.45;
-      surfGain = actx.createGain();
-      surfGain.gain.value = 0;
-      src.connect(bp);
-      bp.connect(surfGain);
-      surfGain.connect(actx.destination);
-      src.start();
-      var osc = actx.createOscillator();
-      osc.type = "sine";
-      osc.frequency.value = 62;
-      var lp = actx.createBiquadFilter();
-      lp.type = "lowpass";
-      lp.frequency.value = 140;
-      underGain = actx.createGain();
-      underGain.gain.value = 0;
-      osc.connect(lp);
-      lp.connect(underGain);
-      underGain.connect(actx.destination);
-      osc.start();
-    } catch (err) { actx = null; }
-  }
-  function mixAudio() {
-    if (!actx || !surfGain || !underGain) return;
-    var now = actx.currentTime;
-    surfGain.gain.setTargetAtTime((1 - prog) * 0.035, now, 0.12);
-    underGain.gain.setTargetAtTime(Math.max(0, prog - 0.35) * 0.05, now, 0.16);
-  }
 
   function signal() {
     if (sent) return;
@@ -416,6 +361,61 @@
       }
       ctx.globalAlpha = 1;
     }
+  }
+
+  var actx = null;
+  var surfGain = null;
+  var underGain = null;
+  function ensureAudio() {
+    if (actx) {
+      if (actx.state === "suspended") { try { actx.resume(); } catch (e) {} }
+      return;
+    }
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    try {
+      actx = new AC();
+      var rate = actx.sampleRate;
+      var len = rate;
+      var buf = actx.createBuffer(1, len, rate);
+      var data = buf.getChannelData(0);
+      var brown = 0;
+      for (var i = 0; i < len; i++) {
+        brown = brown * 0.96 + (Math.random() * 2 - 1) * 0.04;
+        data[i] = brown * 2.1;
+      }
+      var src = actx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      var bp = actx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.value = 420;
+      bp.Q.value = 0.45;
+      surfGain = actx.createGain();
+      surfGain.gain.value = 0;
+      src.connect(bp);
+      bp.connect(surfGain);
+      surfGain.connect(actx.destination);
+      src.start();
+      var osc = actx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = 62;
+      var lp = actx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = 140;
+      underGain = actx.createGain();
+      underGain.gain.value = 0;
+      osc.connect(lp);
+      lp.connect(underGain);
+      underGain.connect(actx.destination);
+      osc.start();
+    } catch (err) { actx = null; }
+  }
+  function mixAudio() {
+    if (!actx || !surfGain || !underGain) return;
+    var now = actx.currentTime;
+    surfGain.gain.setTargetAtTime((1 - prog) * 0.035, now, 0.12);
+    underGain.gain.setTargetAtTime(Math.max(0, prog - 0.35) * 0.05, now, 0.16);
   }
 
   var lastTick = 0;
