@@ -1,5 +1,5 @@
-/* Ocean descent. Original WebGL2 scene: a level lens, analytic swells,
-   fresnel and a deferred spectrum tint. Scroll, drag, or tap to sink.
+/* Ocean descent. Original canvas scene: a level lens over an afternoon swell,
+   then shafts, a bright ceiling and drift once you sink. Scroll, drag, or tap.
    Idea after @snychng — no upstream code. */
 (function () {
   "use strict";
@@ -17,7 +17,7 @@
 
   var goal = 0;
   var prog = 0;
-  var simTime = 2.15;
+  var simTime = 1.7;
   var paused = false;
   try { paused = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
   var dragging = false;
@@ -28,12 +28,10 @@
   var sent = false;
   var lab = "";
   var plab = "";
+  var longCap = 960;
 
   function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
-  function eyeAt(p) {
-    if (p < 0.5) return 1.12 + (0.16 - 1.12) * (p / 0.5);
-    return 0.16 + (-2.7 - 0.16) * ((p - 0.5) / 0.5);
-  }
+  function smooth(t) { return t * t * (3 - 2 * t); }
   function setLab(t) { if (t !== lab) { dive.textContent = t; lab = t; } }
   function setPause() {
     var t = paused ? "Resume waves" : "Pause waves";
@@ -60,8 +58,7 @@
       var data = buf.getChannelData(0);
       var brown = 0;
       for (var i = 0; i < len; i++) {
-        var white = Math.random() * 2 - 1;
-        brown = brown * 0.96 + white * 0.04;
+        brown = brown * 0.96 + (Math.random() * 2 - 1) * 0.04;
         data[i] = brown * 2.1;
       }
       var src = actx.createBufferSource();
@@ -92,7 +89,7 @@
     } catch (err) { actx = null; }
   }
   function mixAudio() {
-    if (!actx || !surfGain) return;
+    if (!actx || !surfGain || !underGain) return;
     var now = actx.currentTime;
     surfGain.gain.setTargetAtTime((1 - prog) * 0.035, now, 0.12);
     underGain.gain.setTargetAtTime(Math.max(0, prog - 0.35) * 0.05, now, 0.16);
@@ -154,7 +151,7 @@
     goal = clamp01(goal + (-dy) / (h * 1.15));
   }, { passive: false });
   function endPtr(e) {
-    if (e.pointerId !== activePtr) return;
+    if (activePtr == null || e.pointerId !== activePtr) return;
     var tap = !moved && Math.abs(e.clientY - downY) < 10;
     dragging = false;
     activePtr = null;
@@ -162,6 +159,7 @@
   }
   canvas.addEventListener("pointerup", endPtr);
   canvas.addEventListener("pointercancel", endPtr);
+  window.addEventListener("pointerup", endPtr);
   stage.addEventListener("wheel", function (e) {
     if (e.target && e.target.closest && e.target.closest("#hint")) return;
     e.preventDefault();
@@ -173,15 +171,11 @@
     ensureAudio();
   }, { passive: false });
 
-  var softGL = true;
-  var longCap = 144;
-  var goalCap = 640;
-
   function fit() {
     var w = canvas.clientWidth || stage.clientWidth || 0;
     var h = canvas.clientHeight || stage.clientHeight || 0;
     if (w < 2 || h < 2) return false;
-    var dpr = Math.min(window.devicePixelRatio || 1, softGL ? 1 : 2);
+    var dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     var pw = Math.max(2, Math.round(w * dpr));
     var ph = Math.max(2, Math.round(h * dpr));
     var m = Math.max(pw, ph);
@@ -197,277 +191,275 @@
     return true;
   }
 
-  function paint2d(ctx, eye) {
+  fit();
+  var ctx = canvas.getContext("2d", { alpha: false });
+  if (!ctx) return;
+
+  function rgb(r, g, b) {
+    return "rgb(" + (r | 0) + "," + (g | 0) + "," + (b | 0) + ")";
+  }
+  function mix(a, b, t) {
+    return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+  }
+  function trace(w, y0, amp, freq, phase) {
+    var step = w > 700 ? 12 : 8;
+    ctx.beginPath();
+    for (var x = 0; x <= w + step; x += step) {
+      var u = x > w ? w : x;
+      var y = y0
+        + Math.sin(u * freq + phase) * amp
+        + Math.sin(u * freq * 0.43 - phase * 0.72) * amp * 0.4;
+      if (x === 0) ctx.moveTo(0, y);
+      else ctx.lineTo(u, y);
+    }
+  }
+  function fillUnder(w, h, y0, amp, freq, phase, style) {
+    trace(w, y0, amp, freq, phase);
+    ctx.lineTo(w, h + 4);
+    ctx.lineTo(0, h + 4);
+    ctx.closePath();
+    ctx.fillStyle = style;
+    ctx.fill();
+  }
+
+  function draw() {
     var w = canvas.width;
     var h = canvas.height;
-    var climb = eye < 1.05 ? Math.max(0, Math.min(1, (1.05 - eye) / 1.05)) : 0;
-    var sea = Math.max(8, Math.min(h - 4, h * (0.40 - climb * 0.38)));
-    var g = ctx.createLinearGradient(0, 0, 0, h);
-    g.addColorStop(0, "#102044");
-    g.addColorStop(Math.max(0.02, sea / h * 0.7), "#6ea0c8");
-    g.addColorStop(Math.min(0.96, sea / h), "#f0a06a");
-    g.addColorStop(1, "#06343c");
-    ctx.fillStyle = g;
+    var t = simTime;
+    var depth = prog;
+    var under = smooth(clamp01((depth - 0.05) / 0.62));
+    var bob = Math.sin(t * 0.65) * h * 0.004 * (1 - depth);
+    var line = h * (0.44 - depth * 0.78) + bob;
+    var amp = Math.max(12, h * 0.028);
+    ctx.globalAlpha = 1;
+
+    var skyBottom = Math.max(line + amp * 2.2, 8);
+    var sky = ctx.createLinearGradient(0, 0, 0, skyBottom);
+    sky.addColorStop(0, "#3d86c4");
+    sky.addColorStop(0.42, "#8ec4e4");
+    sky.addColorStop(0.78, "#f2b07a");
+    sky.addColorStop(1, "#f8d7a6");
+    ctx.fillStyle = sky;
     ctx.fillRect(0, 0, w, h);
-    ctx.fillStyle = "#fff4d8";
-    ctx.beginPath();
-    ctx.arc(w * 0.72, sea * 0.42, Math.max(10, w * 0.055), 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(0, h);
-    for (var x = 0; x <= w; x += 8) {
-      var yy = sea + Math.sin(x * 0.02 + simTime * 1.1) * 8 + Math.sin(x * 0.008 - simTime * 0.5) * 14;
-      ctx.lineTo(x, yy);
+
+    if (line > 8) {
+      var sx = w * 0.72;
+      var sy = Math.max(amp, line * 0.38);
+      var rad = Math.max(16, w * 0.105);
+      var glow = ctx.createRadialGradient(sx, sy, rad * 0.2, sx, sy, rad * 2.8);
+      glow.addColorStop(0, "rgba(255,252,236,0.95)");
+      glow.addColorStop(0.28, "rgba(255,236,196,0.45)");
+      glow.addColorStop(1, "rgba(255,210,150,0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(sx, sy, rad * 2.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#fffdf8";
+      ctx.beginPath();
+      ctx.arc(sx, sy, rad, 0, Math.PI * 2);
+      ctx.fill();
     }
-    ctx.lineTo(w, h);
-    ctx.closePath();
-    ctx.fillStyle = eye < 0.2 ? "#042833" : "#0c4c56";
-    ctx.fill();
-    if (eye < 0.35) {
-      ctx.fillStyle = "rgba(2, 18, 28, " + Math.max(0, Math.min(0.78, (0.35 - eye) / 2.4)) + ")";
+
+    var sea = ctx.createLinearGradient(0, Math.min(Math.max(line, 0), h - 2), 0, h);
+    var topC = mix([176, 224, 212], [16, 72, 82], under * 0.4);
+    var midC = mix([48, 150, 158], [8, 42, 54], under);
+    var botC = mix([10, 50, 62], [2, 14, 22], under);
+    sea.addColorStop(0, rgb(topC[0], topC[1], topC[2]));
+    sea.addColorStop(0.32, rgb(midC[0], midC[1], midC[2]));
+    sea.addColorStop(1, rgb(botC[0], botC[1], botC[2]));
+    fillUnder(w, h, line, amp * 1.15, 0.011, t * 0.8, sea);
+
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.globalAlpha = 0.34 * (1 - under * 0.7);
+    ctx.strokeStyle = "rgba(214, 242, 232, 0.95)";
+    ctx.lineWidth = Math.max(12, h * 0.05);
+    trace(w, line + h * 0.075, amp * 1.5, 0.008, t * 0.55 + 1.1);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(8, 52, 64, 0.7)";
+    ctx.lineWidth = Math.max(16, h * 0.075);
+    trace(w, line + h * 0.22, amp * 2.1, 0.0062, t * 0.4 + 2.2);
+    ctx.stroke();
+    ctx.restore();
+
+    if (line > -amp * 2 && line < h) {
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.lineWidth = Math.max(2.2, w * 0.007);
+      ctx.strokeStyle = "rgba(255,252,246," + (0.88 * (1 - under)) + ")";
+      trace(w, line, amp * 1.15, 0.011, t * 0.8);
+      ctx.stroke();
+    }
+
+    if (under < 0.92 && line < h * 0.95) {
+      var sunX = w * 0.72;
+      var top = Math.max(line, 0);
+      var reach = Math.min(h * 0.38, h - top);
+      var path = ctx.createLinearGradient(0, top, 0, top + reach);
+      var pa = 0.34 * (1 - under);
+      path.addColorStop(0, "rgba(255,246,220," + pa + ")");
+      path.addColorStop(1, "rgba(255,246,220,0)");
+      ctx.fillStyle = path;
+      ctx.beginPath();
+      ctx.moveTo(sunX - w * 0.035, top + 1);
+      ctx.lineTo(sunX + w * 0.035, top + 1);
+      ctx.lineTo(sunX + w * 0.09, top + reach);
+      ctx.lineTo(sunX - w * 0.09, top + reach);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#fff8e8";
+      var nGlint = 14;
+      for (var i = 0; i < nGlint; i++) {
+        var fade = 1 - i / nGlint;
+        var gy = top + 4 + i * (reach / nGlint);
+        if (gy > h - 2) break;
+        var flick = Math.abs(Math.sin(t * 2.6 + i * 1.37));
+        if (flick < 0.28) continue;
+        var half = (0.8 + fade * 2.2) * (i % 2 ? 1.5 : 0.7);
+        ctx.globalAlpha = flick * fade * (1 - under);
+        ctx.fillRect(sunX + Math.sin(t * 1.8 + i * 2.1) * (3 + i * 0.85) - half, gy, half * 2, Math.max(1.2, h * 0.0026));
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    if (under > 0.02) {
+      ctx.fillStyle = "rgba(2, 20, 30," + (under * 0.55) + ")";
       ctx.fillRect(0, 0, w, h);
+
+      var shafts = 3;
+      for (var s = 0; s < shafts; s++) {
+        var x0 = w * (0.22 + s * 0.26);
+        var sway = Math.sin(t * 0.35 + s * 1.4) * w * 0.04;
+        var spread = w * 0.07;
+        ctx.beginPath();
+        ctx.moveTo(x0 - spread * 0.35, 0);
+        ctx.lineTo(x0 + spread * 0.35, 0);
+        ctx.lineTo(x0 + spread * 1.6 + sway, h);
+        ctx.lineTo(x0 - spread * 1.15 + sway, h);
+        ctx.closePath();
+        var sg = ctx.createLinearGradient(0, 0, 0, h);
+        sg.addColorStop(0, "rgba(255,226,176," + (0.2 * under) + ")");
+        sg.addColorStop(0.55, "rgba(180,220,190," + (0.06 * under) + ")");
+        sg.addColorStop(1, "rgba(120,180,170,0)");
+        ctx.fillStyle = sg;
+        ctx.fill();
+      }
+
+      if (under > 0.18) {
+        var ceilA = Math.min(1, (under - 0.18) / 0.5);
+        trace(w, h * 0.15, h * 0.018, 0.018, t * 1.15);
+        ctx.lineTo(w, 0);
+        ctx.lineTo(0, 0);
+        ctx.closePath();
+        ctx.fillStyle = "rgba(176,232,214," + (0.62 * ceilA) + ")";
+        ctx.fill();
+        ctx.globalAlpha = 0.5 * ceilA;
+        ctx.strokeStyle = "rgba(236,255,248,0.95)";
+        ctx.lineWidth = Math.max(1, w * 0.004);
+        trace(w, h * 0.09, h * 0.012, 0.032, -t * 1.5);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+
+      ctx.lineWidth = Math.max(1, w * 0.003);
+      ctx.lineCap = "round";
+      ctx.strokeStyle = "rgba(160,246,216,0.95)";
+      for (var c = 0; c < 5; c++) {
+        var x0 = ((c * 97) % 70) / 100 * w;
+        var y0 = h * (0.5 + (c % 3) * 0.13);
+        ctx.globalAlpha = (0.16 + (c % 3) * 0.07) * under;
+        ctx.beginPath();
+        var steps = 10;
+        for (var s = 0; s <= steps; s++) {
+          var px = x0 + s * (w * 0.045);
+          var py = y0 + Math.sin(px * 0.045 + t * 1.25 + c) * (h * 0.012);
+          if (s === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+
+      if (under > 0.4) {
+        var fishA = Math.min(1, (under - 0.4) / 0.35);
+        ctx.globalAlpha = 0.8 * fishA;
+        ctx.fillStyle = "rgba(10, 40, 48, 0.9)";
+        for (var f = 0; f < 2; f++) {
+          var span = w + 80;
+          var fx = f === 0 ? ((t * 28 + 40) % span) - 40 : w - ((t * 36 + 20) % span);
+          var fy = h * (0.42 + f * 0.22) + Math.sin(t * 0.9 + f) * h * 0.02;
+          var dir = f === 0 ? 1 : -1;
+          var fs = Math.max(1, w / 390);
+          ctx.beginPath();
+          ctx.ellipse(fx, fy, 16 * fs, 5.5 * fs, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.moveTo(fx - dir * 12 * fs, fy);
+          ctx.lineTo(fx - dir * 22 * fs, fy - 6 * fs);
+          ctx.lineTo(fx - dir * 22 * fs, fy + 6 * fs);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      ctx.fillStyle = "#e7fff6";
+      for (var m = 0; m < 16; m++) {
+        var mx = ((m * 47 + 13) % 100) / 100 * w + Math.sin(t * 0.5 + m) * 6;
+        var speed = 16 + (m % 5) * 7;
+        var my = h - ((t * speed + m * 37) % (h + 24));
+        ctx.globalAlpha = (0.2 + (m % 4) * 0.12) * under;
+        ctx.beginPath();
+        ctx.arc(mx, my, 1.1 + (m % 3) * 0.7, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
     }
   }
 
-  var VS = [
-    "#version 300 es",
-    "layout(location=0) in vec2 a;",
-    "out vec2 v;",
-    "void main() {",
-    "  v = a * 0.5 + 0.5;",
-    "  gl_Position = vec4(a, 0.0, 1.0);",
-    "}"
-  ].join("\n");
-
-  var FS = [
-    "#version 300 es",
-    "precision mediump float;",
-    "uniform vec2 uRes;",
-    "uniform float uTime;",
-    "uniform float uEye;",
-    "in vec2 v;",
-    "out vec4 o;",
-    "void main() {",
-    "  vec2 res = max(uRes, vec2(1.0));",
-    "  float aspect = res.x / res.y;",
-    "  float climbT = clamp((1.05 - uEye) / 1.05, 0.0, 1.0);",
-    "  float climb = climbT * climbT * (3.0 - 2.0 * climbT);",
-    "  float wob = sin(v.x * 14.0 + uTime * 0.95) * 0.010 + sin(v.x * 5.2 - uTime * 0.42) * 0.018;",
-    "  float seaLine = 0.57 + climb * 0.55 + wob;",
-    "  vec2 ndc = vec2((v.x * 2.0 - 1.0) * aspect, (v.y - 0.57) * 1.7);",
-    "  vec3 rd = normalize(vec3(ndc.x * 0.9, ndc.y * 0.85, 1.0));",
-    "  vec3 sunDir = normalize(vec3(0.22, 0.30, 0.93));",
-    "  float up = clamp(rd.y * 0.85 + 0.05, 0.0, 1.0);",
-    "  vec3 sky = mix(vec3(0.99, 0.62, 0.40), vec3(0.25, 0.50, 0.82), smoothstep(0.0, 0.34, up));",
-    "  sky = mix(sky, vec3(0.06, 0.16, 0.40), smoothstep(0.4, 1.0, up));",
-    "  float sd = clamp(dot(rd, sunDir), 0.0, 1.0);",
-    "  sky += vec3(1.0, 0.78, 0.46) * pow(sd, 10.0) * 0.38;",
-    "  sky += vec3(1.0, 0.98, 0.90) * smoothstep(0.993, 0.9992, sd);",
-    "  float dist = clamp((seaLine - v.y) / max(seaLine, 0.25), 0.0, 1.0);",
-    "  float nearH = 1.0 - dist;",
-    "  float roll = sin(v.x * 3.1 + dist * 7.0 + uTime * 0.7);",
-    "  float mid = sin(v.x * 9.0 - dist * 4.0 + uTime * 1.15);",
-    "  float rip = sin(v.x * 20.0 + dist * 8.0 - uTime * 1.6);",
-    "  vec3 n = normalize(vec3(-(roll * 0.16 + mid * 0.05 + rip * 0.018), 1.0, 0.05));",
-    "  vec3 body = mix(vec3(0.00, 0.50, 0.55), vec3(0.00, 0.20, 0.30), smoothstep(0.0, 0.82, dist));",
-    "  body *= 0.86 + 0.14 * roll;",
-    "  float ndv = max(dot(n, vec3(0.05, 0.25, 0.97)), 0.05);",
-    "  float fres = pow(1.0 - ndv, 4.0) * smoothstep(0.05, 0.75, nearH);",
-    "  vec3 sea = mix(body, sky, clamp(fres, 0.0, 0.72));",
-    "  float spec = pow(max(dot(reflect(vec3(-0.15, -0.12, -0.98), n), sunDir), 0.0), 30.0);",
-    "  sea += vec3(1.0, 0.95, 0.82) * spec;",
-    "  float dx = (v.x - 0.62) * aspect * 2.4;",
-    "  float path = exp(-dx * dx * 3.4) * pow(max(nearH, 0.0), 0.45);",
-    "  float glint = 0.6 + 0.4 * sin(dist * 28.0 - uTime * 2.1);",
-    "  sea += vec3(1.0, 0.86, 0.55) * path * glint * 0.55;",
-    "  float crest = seaLine - sin(v.x * 14.0 + uTime) * 0.008;",
-    "  float foam = smoothstep(0.02, 0.0, abs(v.y - crest));",
-    "  sea = mix(sea, vec3(0.92, 0.96, 0.95), foam * 0.8 * (1.0 - climb));",
-    "  vec3 col = v.y > seaLine ? sky : sea;",
-    "  float diveT = clamp((0.48 - uEye) / 0.95, 0.0, 1.0);",
-    "  float dive = diveT * diveT * (3.0 - 2.0 * diveT);",
-    "  if (dive > 0.004) {",
-    "    float depth = clamp((0.2 - uEye) / 2.6, 0.0, 1.0);",
-    "    vec3 under = mix(vec3(0.02, 0.20, 0.26), vec3(0.00, 0.05, 0.09), smoothstep(0.15, 0.9, 1.0 - v.y));",
-    "    under = mix(under, vec3(0.00, 0.03, 0.06), depth * 0.65);",
-    "    float ceil = smoothstep(0.48, 0.92, v.y);",
-    "    float ripU = sin(v.x * 34.0 + uTime * 1.6) * sin(v.x * 15.0 - uTime * 1.1);",
-    "    vec3 win = mix(vec3(0.08, 0.32, 0.34), vec3(0.62, 0.86, 0.78), ceil);",
-    "    win += vec3(0.35, 0.45, 0.40) * ripU * ripU * ceil;",
-    "    under = mix(under, win, ceil);",
-    "    float shaft = pow(max(sin(v.x * 8.0 + 0.4 + uTime * 0.18), 0.0), 5.0);",
-    "    shaft += 0.65 * pow(max(sin(v.x * 8.0 + 2.4 + uTime * 0.12), 0.0), 5.0);",
-    "    shaft *= smoothstep(0.05, 0.72, v.y) * (1.0 - ceil);",
-    "    under += vec3(0.55, 0.40, 0.18) * shaft * 0.42;",
-    "    float cau = sin(v.x * 16.0 + v.y * 7.0 + uTime) * sin(v.x * 6.0 - v.y * 13.0 - uTime * 0.7);",
-    "    under += vec3(0.06, 0.28, 0.24) * cau * cau * smoothstep(0.55, 0.05, v.y) * (0.35 + depth);",
-    "    vec2 mv = vec2(v.x * 26.0, v.y * 46.0 - uTime * 1.1);",
-    "    vec2 cell = floor(mv);",
-    "    float mote = fract(sin(dot(cell, vec2(12.9, 78.2))) * 43758.5);",
-    "    float blob = smoothstep(0.18, 0.02, length(fract(mv) - 0.5));",
-    "    under += vec3(0.75, 0.90, 0.86) * blob * step(0.94, mote) * 0.4;",
-    "    col = mix(col, under, dive);",
-    "  }",
-    "  vec2 vg = v * 2.0 - 1.0;",
-    "  col *= 1.0 - dot(vg, vg) * 0.04;",
-    "  o = vec4(clamp(col, 0.0, 1.0), 1.0);",
-    "}"
-  ].join("\n");
-
-  var gl = null;
-  try {
-    gl = canvas.getContext("webgl2", {
-      alpha: false,
-      antialias: false,
-      depth: false,
-      stencil: false,
-      powerPreference: "high-performance",
-      preserveDrawingBuffer: false
-    });
-  } catch (e) { gl = null; }
-
-  if (!gl) { start2d(); return; }
-
-  function compile(type, src) {
-    var sh = gl.createShader(type);
-    gl.shaderSource(sh, src);
-    gl.compileShader(sh);
-    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
-      gl.deleteShader(sh);
-      return null;
-    }
-    return sh;
-  }
-  var vs = compile(gl.VERTEX_SHADER, VS);
-  var fs = compile(gl.FRAGMENT_SHADER, FS);
-  if (!vs || !fs) { start2d(); return; }
-  var progGL = gl.createProgram();
-  gl.attachShader(progGL, vs);
-  gl.attachShader(progGL, fs);
-  gl.bindAttribLocation(progGL, 0, "a");
-  gl.linkProgram(progGL);
-  if (!gl.getProgramParameter(progGL, gl.LINK_STATUS)) { start2d(); return; }
-
-  var vao = gl.createVertexArray();
-  var buf = gl.createBuffer();
-  gl.bindVertexArray(vao);
-  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-  gl.enableVertexAttribArray(0);
-  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-  var locRes = gl.getUniformLocation(progGL, "uRes");
-  var locTime = gl.getUniformLocation(progGL, "uTime");
-  var locEye = gl.getUniformLocation(progGL, "uEye");
-
-  (function detectSoft() {
-    var info = gl.getExtension("WEBGL_debug_renderer_info");
-    var name = "";
-    if (info) {
-      try { name = String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL) || ""); } catch (e) {}
-    }
-    var real = /nvidia|geforce|radeon|\bamd\b|apple|adreno|mali|\bintel\b|powervr/i.test(name);
-    var softName = !name || /swiftshader|llvmpipe|softpipe|software|mesa|basic render|virgl/i.test(name);
-    softGL = softName || !real;
-    goalCap = softGL ? 760 : 960;
-    longCap = softGL ? 160 : goalCap;
-  })();
-
-  function drawGL(eye) {
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, canvas.width, canvas.height);
-    gl.disable(gl.BLEND);
-    gl.disable(gl.DEPTH_TEST);
-    gl.useProgram(progGL);
-    gl.bindVertexArray(vao);
-    gl.uniform2f(locRes, canvas.width, canvas.height);
-    gl.uniform1f(locTime, simTime);
-    gl.uniform1f(locEye, eye);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-  }
-
-  var bootAt = performance.now();
-  var lastTick = bootAt;
-  var lastDraw = 0;
+  var lastTick = 0;
   var holdUntil = 0;
-  var draws = 0;
-  var sharpened = false;
 
-  function eyeNow() {
-    var base = eyeAt(prog);
-    var shore = Math.exp(-((base - 0.2) * (base - 0.2)) / 0.12);
-    return base + (Math.sin(simTime * 1.2) * 0.03 + Math.sin(simTime * 0.5) * 0.016) * shore;
-  }
-
-  function frame() {
-    requestAnimationFrame(frame);
-    var now = performance.now();
-    var gap = now - lastTick;
+  function loop(now) {
+    requestAnimationFrame(loop);
+    var gap = lastTick ? now - lastTick : 16;
     lastTick = now;
     var dt = Math.min(0.05, gap / 1000);
     if (!paused) simTime += dt;
-    var k = dragging ? 14 : 1.4;
+    var k = dragging ? 10 : 1.35;
     prog += (goal - prog) * (1 - Math.exp(-k * dt));
     if (Math.abs(goal - prog) < 0.0008) prog = goal;
     setLab(goal > 0.5 ? "Return" : "Dive");
     if (now < holdUntil) return;
-    var age = now - bootAt;
-    if (!sharpened && age > 3400) {
-      sharpened = true;
-      longCap = goalCap;
-    }
-    if (softGL && !sharpened && now - lastDraw < 130) return;
     if (!fit()) return;
     var t0 = performance.now();
-    drawGL(eyeNow());
+    draw();
     var cost = performance.now() - t0;
-    lastDraw = performance.now();
-    draws += 1;
-    if (draws === 1) signal();
+    signal();
     mixAudio();
-    if (draws <= 2) {
-      if (cost > 36) holdUntil = performance.now() + 280;
+    if (cost > 28) {
+      longCap = Math.max(480, Math.round(longCap * 0.75));
+      holdUntil = performance.now() + 80;
+    }
+  }
+
+  function first() {
+    if (!fit()) {
+      requestAnimationFrame(first);
       return;
     }
-    if (cost > 20 || gap > 46) {
-      var floorCap = sharpened ? 420 : 96;
-      longCap = Math.max(floorCap, Math.round(longCap * 0.7));
-      holdUntil = performance.now() + (sharpened ? 80 : 560);
-    }
-  }
-  requestAnimationFrame(frame);
-
-  function start2d() {
-    gl = null;
-    softGL = true;
-    longCap = 320;
-    goalCap = 480;
-    var ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    var prev2 = performance.now();
-    var hold2 = 0;
-    var last2 = 0;
-    function frame2() {
-      requestAnimationFrame(frame2);
-      var now = performance.now();
-      var gap = now - prev2;
-      prev2 = now;
-      var dt = Math.min(0.05, gap / 1000);
-      if (!paused) simTime += dt;
-      prog += (goal - prog) * (1 - Math.exp(-1.4 * dt));
-      setLab(goal > 0.5 ? "Return" : "Dive");
-      if (now < hold2) return;
-      if (last2 && now - bootAt < 3600 && now - last2 < 90) return;
-      if (!fit()) return;
-      var t0 = performance.now();
-      paint2d(ctx, eyeNow());
-      last2 = performance.now();
+    draw();
+    requestAnimationFrame(function (now) {
       signal();
-      if (performance.now() - t0 > 22) {
-        longCap = Math.max(120, Math.round(longCap * 0.7));
-        hold2 = performance.now() + 280;
-      }
-    }
-    bootAt = performance.now();
-    requestAnimationFrame(frame2);
+      lastTick = now;
+      requestAnimationFrame(loop);
+    });
   }
+
+  if (fit()) draw();
+  requestAnimationFrame(first);
+  window.addEventListener("resize", function () {
+    if (fit()) draw();
+  });
 })();
