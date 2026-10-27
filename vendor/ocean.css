@@ -80,3 +80,11 @@ body {
   font: 600 14px/44px system-ui, -apple-system, sans-serif;
   -webkit-tap-highlight-color: transparent;
 }
+html:not(.gb-ui-open) #hint,
+html:not(.gb-ui-open) #dive {
+  display: none;
+}
+html.gb-ui-open #hint,
+html.gb-ui-open #dive {
+  display: block;
+}
